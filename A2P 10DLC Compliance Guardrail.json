@@ -1,0 +1,156 @@
+{
+  "name": "A2P 10DLC Compliance Guardrail",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "a2p-lead-intake",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "68488783-8475-47ae-8b7d-7c2fb378dca9",
+      "name": "Webhook",
+      "webhookId": "fa1bf611-3c76-43e9-9f8c-88c352efd39a"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract incoming body payload\nconst lead = $input.item.json.body || $input.item.json;\n\nlet isCompliant = true;\nlet rejectionReasons = [];\n\n// 1. Verify Explicit Consent\nif (lead.optInConsentChecked !== true && lead.optInConsentChecked !== \"true\") {\n  isCompliant = false;\n  rejectionReasons.push(\"REJECTED: Missing explicit SMS consent check.\");\n}\n\n// 2. Validate & Sanitize US/CA Phone Number (E.164 Format)\nlet phone = (lead.phone || \"\").replace(/\\D/g, \"\"); // Strip non-digits\nif (phone.length === 10) {\n  phone = \"+1\" + phone; // Normalize 10-digit to E.164 (+1XXXXXXXXXX)\n} else if (phone.length === 11 && phone.startsWith(\"1\")) {\n  phone = \"+\" + phone;\n} else {\n  isCompliant = false;\n  rejectionReasons.push(\"REJECTED: Invalid phone number format.\");\n}\n\n// 3. Ensure A2P Mandatory STOP & Help Opt-Out Language\nlet messageBody = lead.messageBody || \"Thanks for reaching out! A representative will contact you shortly.\";\nconst hasStopKeyword = /stop/i.test(messageBody);\n\nif (!hasStopKeyword) {\n  messageBody += \" Reply STOP to cancel.\";\n}\n\n// Return structured compliance payload\nreturn {\n  json: {\n    contactName: lead.fullName || \"Valued Lead\",\n    normalizedPhone: phone,\n    originalMessage: lead.messageBody,\n    sanitizedMessageBody: messageBody,\n    isCompliant: isCompliant,\n    rejectionReasons: rejectionReasons.join(\" | \"),\n    timestamp: new Date().toISOString()\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "497f894a-e14b-43fa-9fc0-65d164fb40f0",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "2470cc4a-5bf8-409f-b51a-5f4bb95e51f7",
+              "leftValue": "={{ $json.isCompliant }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "looseTypeValidation": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        448,
+        0
+      ],
+      "id": "34a94124-47ff-46ed-be85-ea7cb97c2f64",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://httpbin.org/post",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"to\": \"{{ $json.normalizedPhone }}\",\n  \"body\": \"{{ $json.sanitizedMessageBody }}\",\n  \"status\": \"APPROVED_BY_COMPLIANCE_ENGINE\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        672,
+        -96
+      ],
+      "id": "123ea699-bf59-4d07-a4a6-cea70282f65a",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Capture details from non-compliant leads\nconst item = $input.item.json;\n\nreturn {\n  json: {\n    event: \"A2P_COMPLIANCE_BLOCKED\",\n    contactName: item.contactName,\n    rawPhone: item.normalizedPhone,\n    rejectionReason: item.rejectionReasons,\n    blockedAt: item.timestamp,\n    actionTaken: \"SMS_SUPPRESSED_CARRIER_PROTECTION\"\n  }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        96
+      ],
+      "id": "dccd65d2-c0e0-4caa-a398-c5f343e20446",
+      "name": "Log Compliance Failure"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Compliance Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "8ca01972-a4e2-4c3c-8c5f-2e5f20bceb07",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "afba6aef1985911132a3b23be721ee3d8aa1ee6c3fec1fdcb664b3dba6b49232"
+  },
+  "nodeGroups": [],
+  "id": "Bwbgc65W8sHsIOsX",
+  "tags": []
+}
